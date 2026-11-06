@@ -1,9 +1,15 @@
 #include <math.h>
+#include <stdint.h>
+#include <stdlib.h>
+#include <string.h>
+#include <assert.h>
+#include <stdio.h>
 #include "cache.h"
-#include "memory.h"
 
-static unsigned long cache_hits;
-static unsigned long cache_misses;
+typedef struct metrics {
+    uint64_t cache_hits;
+    uint64_t cache_misses;
+} metrics_t;
 
 typedef struct cache_request {
     uint64_t tag;
@@ -31,6 +37,7 @@ typedef struct cache {
     replacement_fn replacement_policy;
     write_fn write_policy;
     cache_line_t** pool;
+    metrics_t metrics;
 } cache_t;
 
 cache_t* create_cache(int cache_size, int line_size, int assosiativity, replacement_fn replacement_policy, write_fn write_policy) {
@@ -41,28 +48,61 @@ cache_t* create_cache(int cache_size, int line_size, int assosiativity, replacem
     cache->replacement_policy = replacement_policy;
     cache->write_policy = write_policy;
     cache->num_sets = cache_size / line_size / assosiativity;
-    cache->pool = malloc(cache->num_sets);
+    cache->pool = calloc(cache->num_sets, sizeof(cache_line_t*));
+    cache->metrics.cache_hits = 0;
+    cache->metrics.cache_misses = 0;
+
+    return cache;
 }
 
-cache_request_t create_cache_request(cache_t* cache, uint64_t address) {
-    int num_offset_bits = log(cache->line_size);
-    int num_index_bits = log(cache->line_size);
+void destroy_cache(cache_t* cache) {
+    for (int i = 0; i < cache->num_sets; i++) {
+        cache_line_t* line = cache->pool[i];
+        while (line != NULL) {
+            cache_line_t* next = line->next;
+            free(line->metadata);
+            free(line->data);
+            free(line);
+            line = next;
+        }
+    }
+    free(cache->pool);
+    free(cache);
+    cache = NULL;
+}
+
+cache_request_t* create_cache_request(cache_t* cache, uint64_t address) {
+    if (cache == NULL || address == 0) {
+        printf("create_cache_request: Missing argument: %s\n", cache == NULL ? "cache" : "address");
+        exit(-1);
+    }
+
+    int num_offset_bits = log2(cache->line_size);
+    int num_index_bits = (uint64_t)log2(cache->num_sets);
     int num_tag_bits = 32 - num_offset_bits - num_index_bits;
 
-    cache_request_t req;
-    req.tag = address & (((int)(pow(2, num_tag_bits+1))-1) << 32);
-    req.index = address & ((int)(pow(2, num_index_bits+1)-1) << (32 - num_tag_bits)) % cache->num_sets;
-    req.offset = address & ((int)(pow(2, num_offset_bits+1)) - 1);
+    cache_request_t* req = malloc(sizeof(cache_request_t));
+    req->tag = address >> (num_index_bits + num_offset_bits);
+    req->index = (address >> num_offset_bits) & (cache->num_sets - 1);
+    req->offset = address & ((int)(pow(2, num_offset_bits)) - 1);
 
     return req;
 }
 
-cache_line_t* create_cache_line(cache_t* cache, uint64_t address) {
+cache_line_t* create_cache_line(cache_t* cache, uint64_t address, cache_request_t* req) {
     cache_line_t* cache_line = malloc(sizeof(cache_line_t));
+    if (cache_line == NULL) {
+        printf("Could not allocate memory for cache line\n");
+        exit(-1);
+    }
     
     metadata_t* metadata = malloc(sizeof(metadata_t));
-    metadata->tag = create_cache_request(cache, address).tag;
-    metadata->valid_bit = 256;
+    if (metadata == NULL) {
+        printf("Could not allocate memory for cache line metadata\n");
+        exit(-1);
+    }
+    metadata->tag = req->tag;
+    metadata->valid_bit = 1;
     metadata->dirty_bit = 0;
 
     cache_line->metadata = metadata;
@@ -70,84 +110,117 @@ cache_line_t* create_cache_line(cache_t* cache, uint64_t address) {
     cache_line->next = NULL;
 
     // Read line_size bytes from RAM
-    memcpy(cache_line->data, (uint8_t*)address, cache->line_size);
+    //memcpy(cache_line->data, (void*)address, cache->line_size);
 
     return cache_line;
 }
 
-void cache_seek(cache_t* cache, uint64_t address, data_t* data) {
-    cache_request_t req = create_cache_request(cache, address);
-    cache_line_t* cache_line = cache->pool[req.index];
+uint8_t cache_seek(cache_t* cache, uint64_t address, data_t* data) {
+    cache_request_t* req = create_cache_request(cache, address);
+    cache_line_t* cache_line = cache->pool[req->index];
     int num_cache_lines = 0;
     while (cache_line != NULL) {
         num_cache_lines++;
 
-        if (req.tag == cache_line->metadata->tag) {
-            *data = cache_line->data[req.offset];
-            cache_hits++;
-            return;
+        if (req->tag == cache_line->metadata->tag) {
+            if (data)
+                *data = cache_line->data[req->offset];
+            cache->metrics.cache_hits++;
+            free(req);
+            return 1;
         }
 
         cache_line = cache_line->next;
     }
 
     // CACHE MISS!!!!
-    cache_misses++;
-    // replacement policy?
-    // this uses fifo
-    cache_line_t* new_cache_line = create_cache_line(cache, address);
-    new_cache_line->next = cache->pool[req.index];
-    cache->pool[req.index] = new_cache_line;
+    cache->metrics.cache_misses++;
+    
+    cache->replacement_policy(cache, address, data, req);
 
-    int target_lines_in_set = cache->cache_size / cache->line_size;
-    if (num_cache_lines >= target_lines_in_set) {
-        cache_line = new_cache_line;
-        for (int i = 1; i < target_lines_in_set; i++) {
-            cache_line = cache_line->next;
-        }
+    //*data = new_cache_line->data[req.offset];
 
-        assert(cache_line->next != NULL);
-        free(cache_line->next->metadata);
-        free(cache_line->next->data);
-        free(cache_line->next);
-        cache_line->next = NULL;
-    }
+    free(req);
 
-    *data = new_cache_line->data[req.offset];
+    return 0;
 }
 
-void cache_write(cache_t* cache, uint64_t address, data_t* data) {  }
+uint8_t cache_write(cache_t* cache, uint64_t address, data_t* data) {
+    cache_request_t* req = create_cache_request(cache, address);
+    cache_line_t* cache_line = cache->pool[req->index];
+    int num_cache_lines = 0;
+    while (cache_line != NULL) {
+        num_cache_lines++;
+
+        if (req->tag == cache_line->metadata->tag) {
+            if (data)
+                cache_line->data[req->offset] = *data;
+            cache->metrics.cache_hits++;
+            cache->write_policy(cache, address, data);
+            free(req);
+            return 1;
+        }
+
+        cache_line = cache_line->next;
+    }
+
+    // CACHE MISS!!!!
+    cache->metrics.cache_misses++;
+
+    cache->replacement_policy(cache, address, data, req);
+
+    // new_cache_line->data[req.offset] = *data;
+
+    free(req);
+
+    return 0;
+}
+
+uint64_t cache_hits(cache_t* cache) {
+    return cache->metrics.cache_hits;
+}
+
+uint64_t cache_misses(cache_t* cache) {
+    return cache->metrics.cache_misses;
+}
 
 /* REPLACEMENT POLICIES */
 
-void replacement_fifo(cache_t* cache, uint32_t address, data_t* data) {
-    cache_request_t req = create_cache_request(cache, address);
-    
-    cache_line_t* cache_line = cache->pool[req.index];
+void replacement_fifo(cache_t* cache, uint32_t address, data_t* data, cache_request_t* req) {
+    cache_line_t* last_cache_line = cache->pool[req->index];
+    cache_line_t* sec_last_cache_line = NULL;
     size_t line_counter = 0;
-    if (cache_line != NULL) {
+    if (last_cache_line != NULL) {
         line_counter = 1;
-        for (; cache_line->next != NULL; line_counter++) {
-            cache_line = cache_line->next;
+        for (; last_cache_line->next != NULL; line_counter++) {
+            sec_last_cache_line = last_cache_line;
+            last_cache_line = last_cache_line->next;
         }
     }
 
-    cache_line_t* new_cache_line = create_cache_line(cache, address);
-    new_cache_line->next = cache->pool[req.index];
-    cache->pool[req.index] = new_cache_line;
-    *data = new_cache_line->data[req.offset];
+    cache_line_t* new_cache_line = create_cache_line(cache, address, req);
+    new_cache_line->next = cache->pool[req->index];
+    cache->pool[req->index] = new_cache_line;
+    //*data = new_cache_line->data[req->offset];
 
     if (line_counter < cache->assosiativity) 
         return;
-    if (cache_line != NULL) {
-        free(cache_line->next->metadata);
-        free(cache_line->next->data);
-        free(cache_line->next);
-        cache_line->next = NULL;
+    if (last_cache_line != NULL) {
+        free(last_cache_line->metadata);
+        free(last_cache_line->data);
+        free(last_cache_line);
+        if (sec_last_cache_line == NULL)
+            sec_last_cache_line = new_cache_line;
+        if (sec_last_cache_line != NULL)
+            sec_last_cache_line->next = NULL;
     }
 }
 
 /* WRITE POLICIES */
-void write_back() {  }
+void write_back(cache_t* cache, uint32_t address, data_t* data) {
 
-void write_through() {  }
+}
+
+void write_through(cache_t* cache, uint32_t address, data_t* data) {
+
+}

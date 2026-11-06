@@ -5,8 +5,8 @@ CFLAGS = -Wall -Werror -Wno-unused -g -O2
 OBJDIR = obj
 PROGRAM = cachesim
 
-OBJS = cpu.o memory.o
-HEADERS = memory.h
+OBJS = cpu.o memory.o cache.o
+HEADERS = memory.h cache.h
 
 all: $(PROGRAM) $(HEADERS) Makefile
 .PHONY: clean 
