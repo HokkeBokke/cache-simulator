@@ -8,11 +8,11 @@
 #include <stdint.h>
 #include "memory.h"
 
-#define N 90 //256  // Matrix size
+#define N 256  // Matrix size
 #define CLS 64  // Cache Line Size
 #define SM (CLS/sizeof(double))  // Nb of double in each cache line
 
-#define BENCHMARK       NAIVE
+#define BENCHMARK       BLOCK
 
 typedef enum {
     NAIVE,

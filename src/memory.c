@@ -33,7 +33,7 @@ void memory_init(void)
 
 void memory_fetch(uint32_t* address, data_t *data)
 {
-  printf("memory: fetch %p\n", address);
+  //printf("memory: fetch %p\n", address);
   if (data)
     *data = (data_t)0;
 
@@ -46,7 +46,7 @@ void memory_fetch(uint32_t* address, data_t *data)
 
 void memory_read(double* address, data_t *data)
 {
-  printf("memory: read %p\n", address);
+  //printf("memory: read %p\n", address);
   if (data)
     *data = (data_t)0;
 
@@ -57,7 +57,7 @@ void memory_read(double* address, data_t *data)
 
 void memory_write(double* address, data_t *data)
 {
-  printf("memory: write %p\n", address);
+  //printf("memory: write %p\n", address);
 
   if (!cache_write(l1_data_cache, (uint64_t)address, data)) {
     cache_write(l2_cache, (uint64_t)address, data);
