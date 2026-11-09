@@ -9,7 +9,7 @@ OBJS = cpu.o memory.o cache.o
 HEADERS = memory.h cache.h
 
 all: $(PROGRAM) $(HEADERS) Makefile
-.PHONY: clean 
+.PHONY: clean test 
 
 dirs:
 	@mkdir -p $(OBJDIR)
@@ -19,6 +19,10 @@ $(PROGRAM): $(patsubst %, $(OBJDIR)/%, $(OBJS))
 
 $(OBJDIR)/%.o: %.c dirs
 	$(CC) $(CFLAGS) -c $< -o $@
+
+test: $(OBJDIR)/test.o $(OBJDIR)/cache.o
+	$(CC) $(CFLAGS) $^ -o $(OBJDIR)/test
+	./$(OBJDIR)/test
 
 clean:
 	rm -rf *.o *~ $(PROGRAM) $(OBJDIR)
