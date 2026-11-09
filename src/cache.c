@@ -71,7 +71,7 @@ void destroy_cache(cache_t* cache) {
     cache = NULL;
 }
 
-cache_request_t* create_cache_request(cache_t* cache, uint64_t address) {
+cache_request_t create_cache_request(cache_t* cache, uint64_t address) {
     if (cache == NULL || address == 0) {
         printf("create_cache_request: Missing argument: %s\n", cache == NULL ? "cache" : "address");
         exit(-1);
@@ -79,12 +79,12 @@ cache_request_t* create_cache_request(cache_t* cache, uint64_t address) {
 
     int num_offset_bits = log2(cache->line_size);
     int num_index_bits = (uint64_t)log2(cache->num_sets);
-    int num_tag_bits = 32 - num_offset_bits - num_index_bits;
 
-    cache_request_t* req = malloc(sizeof(cache_request_t));
-    req->tag = address >> (num_index_bits + num_offset_bits);
-    req->index = (address >> num_offset_bits) & (cache->num_sets - 1);
-    req->offset = address & ((int)(pow(2, num_offset_bits)) - 1);
+    cache_request_t req = {
+        .tag = address >> (num_index_bits + num_offset_bits),
+        .index = (address >> num_offset_bits) & (cache->num_sets - 1),
+        .offset = address & ((int)(pow(2, num_offset_bits)) - 1),
+    };
 
     return req;
 }
@@ -116,17 +116,16 @@ cache_line_t* create_cache_line(cache_t* cache, uint64_t address, cache_request_
 }
 
 uint8_t cache_seek(cache_t* cache, uint64_t address, data_t* data) {
-    cache_request_t* req = create_cache_request(cache, address);
-    cache_line_t* cache_line = cache->pool[req->index];
+    cache_request_t req = create_cache_request(cache, address);
+    cache_line_t* cache_line = cache->pool[req.index];
     int num_cache_lines = 0;
     while (cache_line != NULL) {
         num_cache_lines++;
 
-        if (req->tag == cache_line->metadata->tag) {
+        if (req.tag == cache_line->metadata->tag) {
             if (data)
-                *data = cache_line->data[req->offset];
+                *data = cache_line->data[req.offset];
             cache->metrics.cache_hits++;
-            free(req);
             return 1;
         }
 
@@ -136,28 +135,25 @@ uint8_t cache_seek(cache_t* cache, uint64_t address, data_t* data) {
     // CACHE MISS!!!!
     cache->metrics.cache_misses++;
     
-    cache->replacement_policy(cache, address, data, req);
+    cache->replacement_policy(cache, address, data, &req);
 
     //*data = new_cache_line->data[req.offset];
-
-    free(req);
 
     return 0;
 }
 
 uint8_t cache_write(cache_t* cache, uint64_t address, data_t* data) {
-    cache_request_t* req = create_cache_request(cache, address);
-    cache_line_t* cache_line = cache->pool[req->index];
+    cache_request_t req = create_cache_request(cache, address);
+    cache_line_t* cache_line = cache->pool[req.index];
     int num_cache_lines = 0;
     while (cache_line != NULL) {
         num_cache_lines++;
 
-        if (req->tag == cache_line->metadata->tag) {
+        if (req.tag == cache_line->metadata->tag) {
             if (data)
-                cache_line->data[req->offset] = *data;
+                cache_line->data[req.offset] = *data;
             cache->metrics.cache_hits++;
             cache->write_policy(cache, address, data);
-            free(req);
             return 1;
         }
 
@@ -167,11 +163,9 @@ uint8_t cache_write(cache_t* cache, uint64_t address, data_t* data) {
     // CACHE MISS!!!!
     cache->metrics.cache_misses++;
 
-    cache->replacement_policy(cache, address, data, req);
+    cache->replacement_policy(cache, address, data, &req);
 
     // new_cache_line->data[req.offset] = *data;
-
-    free(req);
 
     return 0;
 }
