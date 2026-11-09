@@ -11,9 +11,9 @@ typedef struct cache_line cache_line_t;
 typedef struct cache cache_t;
 
 typedef void (*replacement_fn)(cache_t* cache, uint32_t address, data_t* data, cache_request_t* req);
-typedef void (*write_fn)(cache_t* cache, uint32_t address, data_t* data);
+typedef void (*write_fn)(cache_t* cache, cache_line_t* cache_line, uint32_t address, data_t* data);
 
-cache_t* create_cache(int cache_size, int line_size, int assosiativity, replacement_fn replacement_policy, write_fn write_policy);
+cache_t* create_cache(int cache_size, int line_size, int assosiativity, replacement_fn replacement_policy, write_fn write_policy, cache_t* parent_cache);
 void destroy_cache(cache_t* cache);
 
 /**
@@ -30,13 +30,14 @@ uint8_t cache_write(cache_t* cache, uint64_t address, data_t* data);
 
 uint64_t cache_hits(cache_t* cache);
 uint64_t cache_misses(cache_t* cache);
+uint64_t cache_writes(cache_t* cache);
 
 /* REPLACEMENT POLICIES */
 void replacement_fifo(cache_t* cache, uint32_t address, data_t* data, cache_request_t* req);
 
 /* WRITE POLICIES */
-void write_back(cache_t* cache, uint32_t address, data_t* data);
-void write_through(cache_t* cache, uint32_t address, data_t* data);
+void write_back(cache_t* cache, cache_line_t* cache_line, uint32_t address, data_t* data);
+void write_through(cache_t* cache, cache_line_t* cache_line, uint32_t address, data_t* data);
 
 
 #endif

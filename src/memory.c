@@ -24,10 +24,10 @@ void memory_init(void)
 {
   /* Initialize memory subsystem here. */
   
-  l1_inst_cache = create_cache(L1_CACHE_SIZE, 64, 4/*-way*/, replacement_fifo, write_back);
-  l1_data_cache = create_cache(L1_CACHE_SIZE, 64, 8/*-way*/, replacement_fifo, write_back);
-  l2_cache = create_cache(L2_CACHE_SIZE, 64, 8/*-way*/, replacement_fifo, write_back);
-
+  l2_cache = create_cache(L2_CACHE_SIZE, 64, 8/*-way*/, replacement_fifo, write_back, NULL);
+  l1_inst_cache = create_cache(L1_CACHE_SIZE, 64, 4/*-way*/, replacement_fifo, write_back, l2_cache);
+  l1_data_cache = create_cache(L1_CACHE_SIZE, 64, 8/*-way*/, replacement_fifo, write_back, l2_cache);
+  
   instr_count = 0;
 }
 
@@ -68,11 +68,14 @@ void memory_finish(void)
 {
   fprintf(stdout, "Executed %lu instructions.\n", instr_count);
   fprintf(stdout, "L1 instr cache:\t%llu cache hits\n", cache_hits(l1_inst_cache));
-  fprintf(stdout, "L1 instr cache:\t%llu cache misses\n\n", cache_misses(l1_inst_cache));
+  fprintf(stdout, "L1 instr cache:\t%llu cache misses\n", cache_misses(l1_inst_cache));
+  fprintf(stdout, "L1 instr cache:\t%llu cache writes\n\n", cache_writes(l1_inst_cache));
   fprintf(stdout, "L1 data cache:\t%llu cache hits\n", cache_hits(l1_data_cache));
-  fprintf(stdout, "L1 data cache:\t%llu cache misses\n\n", cache_misses(l1_data_cache));
+  fprintf(stdout, "L1 data cache:\t%llu cache misses\n", cache_misses(l1_data_cache));
+  fprintf(stdout, "L1 data cache:\t%llu cache writes\n\n", cache_writes(l1_data_cache));
   fprintf(stdout, "L2 cache:\t%llu cache hits\n", cache_hits(l2_cache));
-  fprintf(stdout, "L2 cache:\t%llu cache misses\n\n", cache_misses(l2_cache));
+  fprintf(stdout, "L2 cache:\t%llu cache misses\n", cache_misses(l2_cache));
+  fprintf(stdout, "L2 cache:\t%llu cache writes\n\n", cache_writes(l2_cache));
 
   /* Deinitialize memory subsystem here */
   destroy_cache(l1_inst_cache);

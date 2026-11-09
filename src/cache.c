@@ -9,6 +9,7 @@
 typedef struct metrics {
     uint64_t cache_hits;
     uint64_t cache_misses;
+    uint64_t writes;
 } metrics_t;
 
 typedef struct cache_request {
@@ -37,10 +38,11 @@ typedef struct cache {
     replacement_fn replacement_policy;
     write_fn write_policy;
     cache_line_t** pool;
+    cache_t* parent_cache;
     metrics_t metrics;
 } cache_t;
 
-cache_t* create_cache(int cache_size, int line_size, int assosiativity, replacement_fn replacement_policy, write_fn write_policy) {
+cache_t* create_cache(int cache_size, int line_size, int assosiativity, replacement_fn replacement_policy, write_fn write_policy, cache_t* parent_cache) {
     cache_t* cache = malloc(sizeof(cache_t));
     cache->cache_size = cache_size;
     cache->line_size = line_size;
@@ -49,8 +51,10 @@ cache_t* create_cache(int cache_size, int line_size, int assosiativity, replacem
     cache->write_policy = write_policy;
     cache->num_sets = cache_size / line_size / assosiativity;
     cache->pool = calloc(cache->num_sets, sizeof(cache_line_t*));
+    cache->parent_cache = parent_cache;
     cache->metrics.cache_hits = 0;
     cache->metrics.cache_misses = 0;
+    cache->metrics.writes = 0;
 
     return cache;
 }
@@ -110,7 +114,7 @@ cache_line_t* create_cache_line(cache_t* cache, uint64_t address, cache_request_
     cache_line->next = NULL;
 
     // Read line_size bytes from RAM
-    //memcpy(cache_line->data, (void*)address, cache->line_size);
+    // memcpy(cache_line->data, (void*)address, cache->line_size);
 
     return cache_line;
 }
@@ -153,7 +157,8 @@ uint8_t cache_write(cache_t* cache, uint64_t address, data_t* data) {
             if (data)
                 cache_line->data[req.offset] = *data;
             cache->metrics.cache_hits++;
-            cache->write_policy(cache, address, data);
+            cache->metrics.writes++;
+            cache->write_policy(cache, cache_line, address, data);
             return 1;
         }
 
@@ -178,6 +183,10 @@ uint64_t cache_misses(cache_t* cache) {
     return cache->metrics.cache_misses;
 }
 
+uint64_t cache_writes(cache_t* cache) {
+    return cache->metrics.writes;
+}
+
 /* REPLACEMENT POLICIES */
 
 void replacement_fifo(cache_t* cache, uint32_t address, data_t* data, cache_request_t* req) {
@@ -199,7 +208,12 @@ void replacement_fifo(cache_t* cache, uint32_t address, data_t* data, cache_requ
 
     if (line_counter < cache->assosiativity) 
         return;
+
     if (last_cache_line != NULL) {
+        if (cache->parent_cache && last_cache_line->metadata->dirty_bit) {
+            cache->parent_cache->metrics.writes++;
+        }
+
         free(last_cache_line->metadata);
         free(last_cache_line->data);
         free(last_cache_line);
@@ -211,10 +225,12 @@ void replacement_fifo(cache_t* cache, uint32_t address, data_t* data, cache_requ
 }
 
 /* WRITE POLICIES */
-void write_back(cache_t* cache, uint32_t address, data_t* data) {
-
+void write_back(cache_t* cache, cache_line_t* cache_line, uint32_t address, data_t* data) {
+    cache_line->metadata->dirty_bit = 1;
 }
 
-void write_through(cache_t* cache, uint32_t address, data_t* data) {
-
+void write_through(cache_t* cache, cache_line_t* cache_line, uint32_t address, data_t* data) {
+    if (cache->parent_cache) {
+        cache_write(cache->parent_cache, address, data);
+    }
 }
