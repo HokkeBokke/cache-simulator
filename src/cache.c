@@ -35,14 +35,14 @@ typedef struct cache {
     size_t line_size;
     uint8_t assosiativity;
     size_t num_sets;
-    replacement_fn replacement_policy;
+    replacement_policy_t replacement_policy;
     write_fn write_policy;
     cache_line_t** pool;
     cache_t* parent_cache;
     metrics_t metrics;
 } cache_t;
 
-cache_t* create_cache(int cache_size, int line_size, int assosiativity, replacement_fn replacement_policy, write_fn write_policy, cache_t* parent_cache) {
+cache_t* create_cache(int cache_size, int line_size, int assosiativity, replacement_policy_t replacement_policy, write_fn write_policy, cache_t* parent_cache) {
     cache_t* cache = malloc(sizeof(cache_t));
     cache->cache_size = cache_size;
     cache->line_size = line_size;
@@ -129,6 +129,9 @@ uint8_t cache_seek(cache_t* cache, uint64_t address, data_t* data) {
         if (req.tag == cache_line->metadata->tag) {
             if (data)
                 *data = cache_line->data[req.offset];
+
+            cache->replacement_policy.access(cache, cache_line, req);
+
             cache->metrics.cache_hits++;
             return 1;
         }
@@ -139,7 +142,7 @@ uint8_t cache_seek(cache_t* cache, uint64_t address, data_t* data) {
     // CACHE MISS!!!!
     cache->metrics.cache_misses++;
     
-    cache->replacement_policy(cache, address, data, &req);
+    cache->replacement_policy.replacement(cache, address, data, &req);
 
     //*data = new_cache_line->data[req.offset];
 
@@ -168,7 +171,7 @@ uint8_t cache_write(cache_t* cache, uint64_t address, data_t* data) {
     // CACHE MISS!!!!
     cache->metrics.cache_misses++;
 
-    cache->replacement_policy(cache, address, data, &req);
+    cache->replacement_policy.replacement(cache, address, data, &req);
 
     // new_cache_line->data[req.offset] = *data;
 
@@ -222,6 +225,57 @@ void replacement_fifo(cache_t* cache, uint32_t address, data_t* data, cache_requ
         if (sec_last_cache_line != NULL)
             sec_last_cache_line->next = NULL;
     }
+}
+
+void access_fifo(cache_t* cache, cache_line_t* cache_line, cache_request_t req) {
+    // do nothing
+}
+
+void replacement_lru(cache_t* cache, uint32_t address, data_t* data, cache_request_t* req) {
+    cache_line_t* last_cache_line = cache->pool[req->index];
+    cache_line_t* sec_last_cache_line = NULL;
+    size_t line_counter = 0;
+    if (last_cache_line != NULL) {
+        line_counter = 1;
+        for (; last_cache_line->next != NULL; line_counter++) {
+            sec_last_cache_line = last_cache_line;
+            last_cache_line = last_cache_line->next;
+        }
+    }
+
+    cache_line_t* new_cache_line = create_cache_line(cache, address, req);
+    new_cache_line->next = cache->pool[req->index];
+    cache->pool[req->index] = new_cache_line;
+    //*data = new_cache_line->data[req->offset];
+
+    if (line_counter < cache->assosiativity) 
+        return;
+
+    if (last_cache_line != NULL) {
+        if (cache->parent_cache && last_cache_line->metadata->dirty_bit) {
+            cache->parent_cache->metrics.writes++;
+        }
+
+        free(last_cache_line->metadata);
+        free(last_cache_line->data);
+        free(last_cache_line);
+        if (sec_last_cache_line == NULL)
+            sec_last_cache_line = new_cache_line;
+        if (sec_last_cache_line != NULL)
+            sec_last_cache_line->next = NULL;
+    }
+}
+
+// move cache line to front of list, keeping list sorted
+// from most recently used to least recently used.
+void access_lru(cache_t* cache, cache_line_t* cache_line, cache_request_t req) {
+    cache_line_t* prev = cache->pool[req.index];
+    if (prev == cache_line) return;
+    while (prev->next != cache_line) prev = prev->next;
+
+    prev->next = cache_line->next;
+    cache_line->next = cache->pool[req.index];
+    cache->pool[req.index] = cache_line;
 }
 
 /* WRITE POLICIES */

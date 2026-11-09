@@ -24,9 +24,9 @@ void memory_init(void)
 {
   /* Initialize memory subsystem here. */
   
-  l2_cache = create_cache(L2_CACHE_SIZE, 64, 8/*-way*/, replacement_fifo, write_back, NULL);
-  l1_inst_cache = create_cache(L1_CACHE_SIZE, 64, 4/*-way*/, replacement_fifo, write_back, l2_cache);
-  l1_data_cache = create_cache(L1_CACHE_SIZE, 64, 8/*-way*/, replacement_fifo, write_back, l2_cache);
+  l2_cache = create_cache(L2_CACHE_SIZE, 64, 8/*-way*/, REPLACEMENT_POLICY_LRU, write_back, NULL);
+  l1_inst_cache = create_cache(L1_CACHE_SIZE, 64, 4/*-way*/, REPLACEMENT_POLICY_LRU, write_back, l2_cache);
+  l1_data_cache = create_cache(L1_CACHE_SIZE, 64, 8/*-way*/, REPLACEMENT_POLICY_LRU, write_back, l2_cache);
   
   instr_count = 0;
 }

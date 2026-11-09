@@ -5,15 +5,23 @@
 #include <inttypes.h>
 #include "common.h"
 
+typedef struct metrics metrics_t;
 typedef struct cache_request cache_request_t;
 typedef struct metadata metadata_t;
 typedef struct cache_line cache_line_t;
 typedef struct cache cache_t;
 
 typedef void (*replacement_fn)(cache_t* cache, uint32_t address, data_t* data, cache_request_t* req);
+typedef void (*access_fn)(cache_t* cache, cache_line_t* cache_line, cache_request_t req);
 typedef void (*write_fn)(cache_t* cache, cache_line_t* cache_line, uint32_t address, data_t* data);
 
-cache_t* create_cache(int cache_size, int line_size, int assosiativity, replacement_fn replacement_policy, write_fn write_policy, cache_t* parent_cache);
+typedef struct replacement_policy {
+    replacement_fn replacement;
+    access_fn access;
+} replacement_policy_t;
+
+
+cache_t* create_cache(int cache_size, int line_size, int assosiativity, replacement_policy_t replacement_policy, write_fn write_policy, cache_t* parent_cache);
 void destroy_cache(cache_t* cache);
 
 /**
@@ -34,6 +42,14 @@ uint64_t cache_writes(cache_t* cache);
 
 /* REPLACEMENT POLICIES */
 void replacement_fifo(cache_t* cache, uint32_t address, data_t* data, cache_request_t* req);
+void access_fifo(cache_t* cache, cache_line_t* cache_line, cache_request_t req);
+
+void replacement_lru(cache_t* cache, uint32_t address, data_t* data, cache_request_t* req);
+void access_lru(cache_t* cache, cache_line_t* cache_line, cache_request_t req);
+
+static replacement_policy_t REPLACEMENT_POLICY_FIFO = { replacement_fifo, access_fifo };
+static replacement_policy_t REPLACEMENT_POLICY_LRU = { replacement_lru, access_lru };
+
 
 /* WRITE POLICIES */
 void write_back(cache_t* cache, cache_line_t* cache_line, uint32_t address, data_t* data);

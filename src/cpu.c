@@ -12,7 +12,7 @@
 #define CLS 64  // Cache Line Size
 #define SM (CLS/sizeof(double))  // Nb of double in each cache line
 
-#define BENCHMARK       BLOCK
+#define BENCHMARK       NAIVE
 
 typedef enum {
     NAIVE,
