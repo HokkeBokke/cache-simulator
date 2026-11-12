@@ -8,6 +8,18 @@ static int checks = 0;
 
 #define EXPECT(cache, h, m, w) expect(#cache, __LINE__, cache, h, m, w)
 
+// build a cache from loose parameters
+static cache_t* make_cache(size_t size, size_t line_size, uint8_t associativity, replacement_policy_t replacement, write_fn write_policy, cache_t* parent) {
+    cache_params_t params = {
+        .cache_size = size,
+        .associativity = associativity,
+        .line_size = line_size,
+        .replacement_policy = replacement,
+        .write_policy = write_policy,
+    };
+    return create_cache(params, parent);
+}
+
 // compare a cache's counters against the expected hits, misses and writes
 static void expect(const char* name, int line, cache_t* cache, uint64_t hits, uint64_t misses, uint64_t writes) {
     checks++;
@@ -34,7 +46,8 @@ static void write_through_hierarchy(cache_t* l1, cache_t* l2, uint64_t address) 
 
 // cold miss, then hits anywhere in the same 64 byte line
 static void test_spatial_locality(void) {
-    cache_t* c = create_cache(1024, 64, 2, REPLACEMENT_POLICY_LRU, write_back, NULL);
+    
+    cache_t* c = make_cache(1024, 64, 2, REPLACEMENT_POLICY_LRU, write_back, NULL);
     cache_seek(c, 0x1000, NULL);
     cache_seek(c, 0x1008, NULL);
     cache_seek(c, 0x103f, NULL);
@@ -47,7 +60,7 @@ static void test_spatial_locality(void) {
 
 // sequential scan of 64 doubles touches 8 lines: 8 misses, 56 hits
 static void test_sequential_scan(void) {
-    cache_t* c = create_cache(4096, 64, 4, REPLACEMENT_POLICY_LRU, write_back, NULL);
+    cache_t* c = make_cache(4096, 64, 4, REPLACEMENT_POLICY_LRU, write_back, NULL);
     for (int i = 0; i < 64; i++)
         cache_seek(c, 0x10000 + i * sizeof(double), NULL);
     EXPECT(c, 56, 8, 0);
@@ -56,14 +69,14 @@ static void test_sequential_scan(void) {
 
 // direct mapped: addresses one cache size apart share a set and evict each other
 static void test_direct_mapped_conflict(void) {
-    cache_t* c = create_cache(256, 64, 1, REPLACEMENT_POLICY_LRU, write_back, NULL);
+    cache_t* c = make_cache(256, 64, 1, REPLACEMENT_POLICY_LRU, write_back, NULL);
     for (int i = 0; i < 3; i++) {
         cache_seek(c, 0x1000, NULL);
         cache_seek(c, 0x1100, NULL);
     }
     EXPECT(c, 0, 6, 0);
     // addresses in different sets coexist
-    cache_t* d = create_cache(256, 64, 1, REPLACEMENT_POLICY_LRU, write_back, NULL);
+    cache_t* d = make_cache(256, 64, 1, REPLACEMENT_POLICY_LRU, write_back, NULL);
     for (int i = 0; i < 3; i++) {
         cache_seek(d, 0x1000, NULL);
         cache_seek(d, 0x1040, NULL);
@@ -75,7 +88,7 @@ static void test_direct_mapped_conflict(void) {
 
 // 2-way associativity absorbs the conflict that breaks the direct mapped cache
 static void test_associativity(void) {
-    cache_t* c = create_cache(512, 64, 2, REPLACEMENT_POLICY_LRU, write_back, NULL);
+    cache_t* c = make_cache(512, 64, 2, REPLACEMENT_POLICY_LRU, write_back, NULL);
     for (int i = 0; i < 3; i++) {
         cache_seek(c, 0x1000, NULL);
         cache_seek(c, 0x1100, NULL);
@@ -87,8 +100,8 @@ static void test_associativity(void) {
 // single set, 2 ways: A B A C A. LRU keeps A, FIFO evicts it
 static void test_lru_vs_fifo(void) {
     uint64_t seq[] = { 0x1000, 0x2000, 0x1000, 0x3000, 0x1000 };
-    cache_t* lru = create_cache(128, 64, 2, REPLACEMENT_POLICY_LRU, write_back, NULL);
-    cache_t* fifo = create_cache(128, 64, 2, REPLACEMENT_POLICY_FIFO, write_back, NULL);
+    cache_t* lru = make_cache(128, 64, 2, REPLACEMENT_POLICY_LRU, write_back, NULL);
+    cache_t* fifo = make_cache(128, 64, 2, REPLACEMENT_POLICY_FIFO, write_back, NULL);
     for (int i = 0; i < 5; i++) {
         cache_seek(lru, seq[i], NULL);
         cache_seek(fifo, seq[i], NULL);
@@ -99,10 +112,23 @@ static void test_lru_vs_fifo(void) {
     destroy_cache(fifo);
 }
 
+// single set, 2 ways: A B A hits whichever the policy, the new line C is always cached afterwards
+static void test_random_replacement(void) {
+    cache_t* c = make_cache(128, 64, 2, REPLACEMENT_POLICY_RANDOM, write_back, NULL);
+    cache_seek(c, 0x1000, NULL);
+    cache_seek(c, 0x2000, NULL);
+    cache_seek(c, 0x1000, NULL);
+    EXPECT(c, 1, 2, 0);
+    cache_seek(c, 0x3000, NULL);
+    cache_seek(c, 0x3000, NULL);
+    EXPECT(c, 2, 3, 0);
+    destroy_cache(c);
+}
+
 // looping over one more line than fits thrashes both policies completely
 static void test_capacity_thrash(void) {
-    cache_t* lru = create_cache(256, 64, 4, REPLACEMENT_POLICY_LRU, write_back, NULL);
-    cache_t* fifo = create_cache(256, 64, 4, REPLACEMENT_POLICY_FIFO, write_back, NULL);
+    cache_t* lru = make_cache(256, 64, 4, REPLACEMENT_POLICY_LRU, write_back, NULL);
+    cache_t* fifo = make_cache(256, 64, 4, REPLACEMENT_POLICY_FIFO, write_back, NULL);
     for (int pass = 0; pass < 2; pass++) {
         for (int i = 0; i < 5; i++) {
             cache_seek(lru, 0x1000 + i * 0x40, NULL);
@@ -117,7 +143,7 @@ static void test_capacity_thrash(void) {
 
 // a write miss counts as a miss but not as a write, the following write hits
 static void test_write_miss(void) {
-    cache_t* c = create_cache(1024, 64, 2, REPLACEMENT_POLICY_LRU, write_back, NULL);
+    cache_t* c = make_cache(1024, 64, 2, REPLACEMENT_POLICY_LRU, write_back, NULL);
     cache_write(c, 0x1000, NULL);
     EXPECT(c, 0, 1, 0);
     cache_write(c, 0x1000, NULL);
@@ -127,8 +153,8 @@ static void test_write_miss(void) {
 
 // write-back: parent only sees a write when a dirty line is evicted
 static void test_write_back(void) {
-    cache_t* l2 = create_cache(4096, 64, 4, REPLACEMENT_POLICY_LRU, write_back, NULL);
-    cache_t* l1 = create_cache(64, 64, 1, REPLACEMENT_POLICY_LRU, write_back, l2);
+    cache_t* l2 = make_cache(4096, 64, 4, REPLACEMENT_POLICY_LRU, write_back, NULL);
+    cache_t* l1 = make_cache(64, 64, 1, REPLACEMENT_POLICY_LRU, write_back, l2);
     read_through(l1, l2, 0x1000);
     write_through_hierarchy(l1, l2, 0x1000);
     // store hit is absorbed by L1
@@ -147,8 +173,8 @@ static void test_write_back(void) {
 
 // write-through: every store hit in L1 is forwarded to L2, evictions are free
 static void test_write_through(void) {
-    cache_t* l2 = create_cache(4096, 64, 4, REPLACEMENT_POLICY_LRU, write_through, NULL);
-    cache_t* l1 = create_cache(64, 64, 1, REPLACEMENT_POLICY_LRU, write_through, l2);
+    cache_t* l2 = make_cache(4096, 64, 4, REPLACEMENT_POLICY_LRU, write_through, NULL);
+    cache_t* l1 = make_cache(64, 64, 1, REPLACEMENT_POLICY_LRU, write_through, l2);
     read_through(l1, l2, 0x1000);
     write_through_hierarchy(l1, l2, 0x1000);
     write_through_hierarchy(l1, l2, 0x1000);
@@ -164,8 +190,8 @@ static void test_write_through(void) {
 
 // L1 hits never reach L2, L1 misses always do
 static void test_hierarchy_lookup(void) {
-    cache_t* l2 = create_cache(4096, 64, 4, REPLACEMENT_POLICY_LRU, write_back, NULL);
-    cache_t* l1 = create_cache(64, 64, 1, REPLACEMENT_POLICY_LRU, write_back, l2);
+    cache_t* l2 = make_cache(4096, 64, 4, REPLACEMENT_POLICY_LRU, write_back, NULL);
+    cache_t* l1 = make_cache(64, 64, 1, REPLACEMENT_POLICY_LRU, write_back, l2);
     read_through(l1, l2, 0x1000);
     read_through(l1, l2, 0x1000);
     EXPECT(l1, 1, 1, 0);
@@ -181,9 +207,9 @@ static void test_hierarchy_lookup(void) {
 
 // separate L1 instruction and data caches share the unified L2
 static void test_split_l1_shared_l2(void) {
-    cache_t* l2 = create_cache(4096, 64, 4, REPLACEMENT_POLICY_LRU, write_back, NULL);
-    cache_t* l1i = create_cache(1024, 64, 4, REPLACEMENT_POLICY_LRU, write_back, l2);
-    cache_t* l1d = create_cache(1024, 64, 8, REPLACEMENT_POLICY_LRU, write_back, l2);
+    cache_t* l2 = make_cache(4096, 64, 4, REPLACEMENT_POLICY_LRU, write_back, NULL);
+    cache_t* l1i = make_cache(1024, 64, 4, REPLACEMENT_POLICY_LRU, write_back, l2);
+    cache_t* l1d = make_cache(1024, 64, 8, REPLACEMENT_POLICY_LRU, write_back, l2);
     read_through(l1i, l2, 0x1000);
     // data cache has not seen the line, but L2 has
     read_through(l1d, l2, 0x1000);
@@ -197,7 +223,7 @@ static void test_split_l1_shared_l2(void) {
 
 // column walk with a stride of one cache size maps every access to one set
 static void test_strided_access(void) {
-    cache_t* c = create_cache(4096, 64, 4, REPLACEMENT_POLICY_LRU, write_back, NULL);
+    cache_t* c = make_cache(4096, 64, 4, REPLACEMENT_POLICY_LRU, write_back, NULL);
     // 8 rows, 4 ways: the second pass misses everywhere
     for (int pass = 0; pass < 2; pass++)
         for (int row = 0; row < 8; row++)
@@ -212,6 +238,7 @@ int main(void) {
     test_direct_mapped_conflict();
     test_associativity();
     test_lru_vs_fifo();
+    test_random_replacement();
     test_capacity_thrash();
     test_write_miss();
     test_write_back();

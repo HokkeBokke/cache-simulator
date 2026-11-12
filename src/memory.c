@@ -5,14 +5,10 @@
  */
 
 #include "memory.h"
-#include "cache.h"
 
 #include <stdio.h>
 #include <stdint.h>
 #include <inttypes.h>
-
-#define L1_CACHE_SIZE 32768   // 32 KB
-#define L2_CACHE_SIZE 524288  // 512 KB
 
 static unsigned long instr_count;
 
@@ -20,13 +16,12 @@ static cache_t* l1_inst_cache;
 static cache_t* l1_data_cache;
 static cache_t* l2_cache;
 
-void memory_init(void)
+void memory_init(cache_params_t l1_inst_params, cache_params_t l1_data_params, cache_params_t l2_params)
 {
   /* Initialize memory subsystem here. */
-  
-  l2_cache = create_cache(L2_CACHE_SIZE, 64, 8/*-way*/, REPLACEMENT_POLICY_LRU, write_back, NULL);
-  l1_inst_cache = create_cache(L1_CACHE_SIZE, 64, 4/*-way*/, REPLACEMENT_POLICY_LRU, write_back, l2_cache);
-  l1_data_cache = create_cache(L1_CACHE_SIZE, 64, 8/*-way*/, REPLACEMENT_POLICY_LRU, write_back, l2_cache);
+  l2_cache = create_cache(l2_params, NULL);
+  l1_inst_cache = create_cache(l1_inst_params, l2_cache);
+  l1_data_cache = create_cache(l1_data_params, l2_cache);
   
   instr_count = 0;
 }
@@ -64,6 +59,23 @@ void memory_write(double* address, data_t *data)
   }
 }
 
+static cache_stats_t get_cache_stats(cache_t* cache)
+{
+  cache_stats_t stats = {
+    .hits = cache_hits(cache),
+    .misses = cache_misses(cache),
+    .writes = cache_writes(cache),
+  };
+  return stats;
+}
+
+void memory_get_stats(memory_stats_t* stats)
+{
+  stats->l1_inst = get_cache_stats(l1_inst_cache);
+  stats->l1_data = get_cache_stats(l1_data_cache);
+  stats->l2 = get_cache_stats(l2_cache);
+}
+
 void memory_finish(void)
 {
   fprintf(stdout, "Executed %lu instructions.\n", instr_count);
@@ -77,6 +89,11 @@ void memory_finish(void)
   fprintf(stdout, "L2 cache:\t%llu cache misses\n", cache_misses(l2_cache));
   fprintf(stdout, "L2 cache:\t%llu cache writes\n\n", cache_writes(l2_cache));
 
+  memory_destroy();
+}
+
+void memory_destroy(void)
+{
   /* Deinitialize memory subsystem here */
   destroy_cache(l1_inst_cache);
   destroy_cache(l1_data_cache);

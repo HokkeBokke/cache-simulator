@@ -33,7 +33,7 @@ typedef struct cache_line {
 typedef struct cache {
     size_t cache_size;
     size_t line_size;
-    uint8_t assosiativity;
+    uint8_t associativity;
     size_t num_sets;
     replacement_policy_t replacement_policy;
     write_fn write_policy;
@@ -42,14 +42,14 @@ typedef struct cache {
     metrics_t metrics;
 } cache_t;
 
-cache_t* create_cache(int cache_size, int line_size, int assosiativity, replacement_policy_t replacement_policy, write_fn write_policy, cache_t* parent_cache) {
+cache_t* create_cache(cache_params_t parameters, cache_t* parent_cache) {
     cache_t* cache = malloc(sizeof(cache_t));
-    cache->cache_size = cache_size;
-    cache->line_size = line_size;
-    cache->assosiativity = assosiativity;
-    cache->replacement_policy = replacement_policy;
-    cache->write_policy = write_policy;
-    cache->num_sets = cache_size / line_size / assosiativity;
+    cache->cache_size = parameters.cache_size;
+    cache->line_size = parameters.line_size;
+    cache->associativity = parameters.associativity;
+    cache->replacement_policy = parameters.replacement_policy;
+    cache->write_policy = parameters.write_policy;
+    cache->num_sets = parameters.cache_size / parameters.line_size / parameters.associativity;
     cache->pool = calloc(cache->num_sets, sizeof(cache_line_t*));
     cache->parent_cache = parent_cache;
     cache->metrics.cache_hits = 0;
@@ -209,7 +209,7 @@ void replacement_fifo(cache_t* cache, uint32_t address, data_t* data, cache_requ
     cache->pool[req->index] = new_cache_line;
     //*data = new_cache_line->data[req->offset];
 
-    if (line_counter < cache->assosiativity) 
+    if (line_counter < cache->associativity) 
         return;
 
     if (last_cache_line != NULL) {
@@ -248,7 +248,7 @@ void replacement_lru(cache_t* cache, uint32_t address, data_t* data, cache_reque
     cache->pool[req->index] = new_cache_line;
     //*data = new_cache_line->data[req->offset];
 
-    if (line_counter < cache->assosiativity) 
+    if (line_counter < cache->associativity) 
         return;
 
     if (last_cache_line != NULL) {
@@ -276,6 +276,40 @@ void access_lru(cache_t* cache, cache_line_t* cache_line, cache_request_t req) {
     prev->next = cache_line->next;
     cache_line->next = cache->pool[req.index];
     cache->pool[req.index] = cache_line;
+}
+
+// new line goes first in the list, if the set is full a random old line is evicted
+void replacement_random(cache_t* cache, uint32_t address, data_t* data, cache_request_t* req) {
+    size_t line_counter = 0;
+    for (cache_line_t* line = cache->pool[req->index]; line != NULL; line = line->next)
+        line_counter++;
+
+    cache_line_t* new_cache_line = create_cache_line(cache, address, req);
+    new_cache_line->next = cache->pool[req->index];
+    cache->pool[req->index] = new_cache_line;
+
+    if (line_counter < cache->associativity)
+        return;
+
+    // old lines are at position 1..line_counter, pick one of them
+    size_t victim_position = 1 + rand() % line_counter;
+    cache_line_t* prev = new_cache_line;
+    for (size_t i = 1; i < victim_position; i++)
+        prev = prev->next;
+    cache_line_t* victim = prev->next;
+
+    if (cache->parent_cache && victim->metadata->dirty_bit) {
+        cache->parent_cache->metrics.writes++;
+    }
+
+    prev->next = victim->next;
+    free(victim->metadata);
+    free(victim->data);
+    free(victim);
+}
+
+void access_random(cache_t* cache, cache_line_t* cache_line, cache_request_t req) {
+    // do nothing
 }
 
 /* WRITE POLICIES */
